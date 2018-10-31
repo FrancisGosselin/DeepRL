@@ -5,7 +5,7 @@ TO DO:
 """
 import tensorflow as tf
 from tensorflow.layers import batch_normalization
-from tensorflow.contrib.layers import fully_connected
+from tensorflow.contrib.layers import fully_connected, batch_norm
 from tensorflow.nn import relu, tanh
 from tensorflow.losses import mean_squared_error
 from tensorflow.train import AdamOptimizer
@@ -25,24 +25,23 @@ class Actor():
         self.action_max_value = action_max_value
         
         self.input_state, self.targets, self.output, self.loss = self.create_net('actor')
-        self.input_state_pred, self.input_action_pred , _ , _ = self.create_net('actorPred')
+        self.input_state_pred, self.input_action_pred , _ , _ = self.create_net('pred_net_actor')
         self.weights = tf.trainable_variables('actor')
-        self.weights_pred = tf.trainable_variables('actorPred')
-        print(len(self.weights))
-        print(len(self.weights_pred))
+        self.weights_pred = tf.trainable_variables('pred_net')
 
         self.update_pred_net = [ tf.assign(self.weights_pred[i], 
                                         tf.add(  tf.multiply(self.tau, self.weights[i]),
                                                  tf.multiply(1.0-self.tau, self.weights_pred[i]) ))
                                 for i in range(len(self.weights))]
+        
         self.action_gradient = tf.placeholder('float', shape=[None,self.action_dim])
         self.J_gradient = tf.gradients(self.output, self.weights, -self.action_gradient)
-        self.J_gradient_normalized = list(map(lambda x: x/batch_size, J_gradient))
-        self.optimizer = AdamOptimizer().apply_gradient(zip(J_gradient_normalized, self.weights))
+        self.J_gradient_normalized = list(map(lambda x: x/batch_size, self.J_gradient))
+        self.optimizer = AdamOptimizer().apply_gradients(zip(self.J_gradient_normalized, self.weights))
         
         
    
-    def predict(self, sess, state, action):
+    def predict(self, sess, state):
         return sess.run(self.output, feed_dict = {self.input_state : state} )
         
     def fit(self, sess, state, action_targets, action_gradient):
@@ -58,9 +57,9 @@ class Actor():
         targets = tf.placeholder(dtype='float', shape=[None,self.action_dim], name='targets')
         
         with tf.variable_scope(scope_name, reuse = tf.AUTO_REUSE):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu, normalizer_fn=batch_normalization)
-            n2 = fully_connected(inputs=n1, num_outputs=32, activation_fn=relu, normalizer_fn=batch_normalization)
-            output = fully_connected(inputs=n2, num_outputs=self.action_dim, activation_fn=tanh, normalizer_fn=batch_normalization)
+            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu)
+            n2 = fully_connected(inputs=n1, num_outputs=32, activation_fn=relu)
+            output = fully_connected(inputs=n2, num_outputs=self.action_dim, activation_fn=tanh)
             output_scaled = tf.scalar_mul(self.action_max_value,output)
             loss = mean_squared_error(targets, output_scaled)
     
@@ -77,16 +76,16 @@ class Critic():
         self.action_max_value = action_max_value
         
         self.input_state, self.input_action, self.targets, self.output, self.loss = self.create_net('critic')
-        self.input_state_pred, self.input_action_pred , _ , _, _ = self.create_net('criticPred')
+        self.input_state_pred, self.input_action_pred , _ , _, _ = self.create_net('pred_net_critic')
         self.weights = tf.trainable_variables('critic')
-        self.weights_pred = tf.trainable_variables('criticPred')
+        self.weights_pred = tf.trainable_variables('pred_net')
         
         self.update_pred_net = [ tf.assign(self.weights_pred[i], 
                                         tf.add(  tf.multiply(self.tau,self.weights[i]),
                                                  tf.multiply(1.0-self.tau, self.weights_pred[i]) ))
                                 for i in range(len(self.weights))]
-        self.AdamOptimizer().minimize(self.loss)
-        self.action_gradient = tf.gradient(self.loss, self.input_action)
+        self.optimizer = AdamOptimizer().minimize(self.loss)
+        self.action_gradient = tf.gradients(self.loss, self.input_action)
    
     def predict(self, sess, state, action):
         return sess.run(self.output, feed_dict = { self.input_state : state,
@@ -109,10 +108,10 @@ class Critic():
         
         targets = tf.placeholder(dtype='float', shape=[None,1], name='targets')
         
-        with tf.variable_scope(scope_name, reuse = True):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu, normalizer_fn=batch_normalization)
-            n2 = fully_connected(inputs=n1, num_outputs=32, activation_fn=relu, normalizer_fn=batch_normalization)
-            actions = fully_connected(inputs=inputs_action, num_outputs=32, activation_fn=relu, normalizer_fn=batch_normalization)
+        with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
+            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu)
+            n2 = fully_connected(inputs=n1, num_outputs=1, activation_fn=relu)
+            actions = fully_connected(inputs=inputs_action, num_outputs=1, activation_fn=relu)
             output = relu(tf.add(actions,n2))
             loss = mean_squared_error(targets, output)
         
@@ -156,11 +155,11 @@ def train():
         action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(action_dim))
 
         for i in range(episodes):
-            done = false
+            done = False
             state = np.reshape(env.reset(), [1,state_dim])
             total_reward = 0
             while(not done):
-                action = actor.predict(np.reshape(s, (1, state_dim))) + action_noise()
+                action = actor.predict(sess, np.reshape(state, (1, state_dim))) + action_noise()
                 next_state, reward, done, info = env.step(action)
                 next_state = np.reshape(next_state,[1,state_dim])
                 memory.append([next_state,reward, action, state, done])

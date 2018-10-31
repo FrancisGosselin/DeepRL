@@ -122,16 +122,14 @@ class Critic():
 def fit_batch(sess, batch, actor, critic, discount):
     Q_targets = []
     action_gradients = []
-    print("hello")
-
     for i in range(len(batch)):
         next_state, reward, action, state, done = batch[i]
         next_action = actor.predict(sess,next_state)
         Q_target = reward 
         if(not done):
-            Q_target += discount*critic.predict(sess, next_state, next_action)
-        Q_targets.append(Q_target[0])
-        action_gradient = critic.get_action_gradient(sess, state, action, Q_target)
+            Q_target += discount*critic.predict(sess, next_state, next_action)[0][0]
+        Q_targets.append([Q_target])
+        action_gradient = critic.get_action_gradient(sess, state, action, [[Q_target]])
         action_gradients.append(action_gradient[0][0])
     actions = np.array(batch)[:,2][0]
     states = np.array(batch)[:,3][0]
@@ -166,7 +164,7 @@ def train():
                 next_state = np.reshape(next_state,[1,state_dim])
                 memory.append([next_state,reward, action, state, done])
                 total_reward += reward
-            
+                env.render()
                 if len(memory) > 32:
                     batch = random.sample(memory,batch_size)
                     fit_batch(sess, batch, actor, critic, discount_factor)

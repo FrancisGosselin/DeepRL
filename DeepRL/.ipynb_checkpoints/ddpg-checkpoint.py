@@ -96,9 +96,10 @@ class Critic():
                                                 self.input_action : action,
                                                 self.targets : Q_target})
         
-    def action_gradient(self, sess, state, action):
+    def get_action_gradient(self, sess, state, action, targets):
         return sess.run(self.action_gradient, feed_dict = { self.input_state : state,
-                                                             self.input_action : action})
+                                                             self.input_action : action,
+                                                            self.targets: targets})
     def update_net(self, sess):
         sess.run(self.update_pred_net)
     
@@ -121,25 +122,25 @@ class Critic():
 def fit_batch(sess, batch, actor, critic, discount):
     Q_targets = []
     action_gradients = []
-    batch_np = np.array(batch)
+    print("hello")
+
     for i in range(len(batch)):
-        next_state, reward, action, state, done = batch_np[i]
+        next_state, reward, action, state, done = batch[i]
         next_action = actor.predict(sess,next_state)
         Q_target = reward 
         if(not done):
             Q_target += discount*critic.predict(sess, next_state, next_action)
-        Q_targets.append(Q_target)
-        action_gradient = critic.action_gradient(sess, state, action)
-        action_gradients.append(action_gradient)
-    actions = batch_np[:,2]
-    states = batch_np[:,3]
+        Q_targets.append(Q_target[0])
+        action_gradient = critic.get_action_gradient(sess, state, action, Q_target)
+        action_gradients.append(action_gradient[0][0])
+    actions = np.array(batch)[:,2][0]
+    states = np.array(batch)[:,3][0]
     critic.fit(sess, states, actions, Q_targets)
-    actor.fit(sess, states, actions)
+    actor.fit(sess, states, actions, action_gradients)
         
     
 def train():
     with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
         episodes = 1000
         batch_size = 32
         discount_factor = 0.99
@@ -153,8 +154,9 @@ def train():
         actor = Actor(state_dim, action_dim, action_max, batch_size)
         critic = Critic(state_dim, action_dim, action_max)
         action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(action_dim))
+        sess.run(tf.global_variables_initializer())
 
-        for i in range(episodes):
+        for episode in range(episodes):
             done = False
             state = np.reshape(env.reset(), [1,state_dim])
             total_reward = 0
@@ -167,7 +169,7 @@ def train():
             
                 if len(memory) > 32:
                     batch = random.sample(memory,batch_size)
-                    fit_batch(sess, batch, actor, critic, discout_factor)
+                    fit_batch(sess, batch, actor, critic, discount_factor)
                     actor.update_net(sess)
                     critic.update_net(sess)
                     

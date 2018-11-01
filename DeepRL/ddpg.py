@@ -1,8 +1,4 @@
 
-"""
-TO DO:
-
-"""
 import tensorflow as tf
 from tensorflow.layers import batch_normalization
 from tensorflow.contrib.layers import fully_connected, batch_norm
@@ -37,7 +33,7 @@ class Actor():
         self.action_gradient = tf.placeholder('float', shape=[None,self.action_dim])
         self.J_gradient = tf.gradients(self.output, self.weights, -self.action_gradient)
         self.J_gradient_normalized = list(map(lambda x: x/batch_size, self.J_gradient))
-        self.optimizer = AdamOptimizer().apply_gradients(zip(self.J_gradient_normalized, self.weights))
+        self.optimizer = AdamOptimizer(learning_rate=self.lr).apply_gradients(zip(self.J_gradient_normalized, self.weights))
         
         
    
@@ -57,10 +53,16 @@ class Actor():
         targets = tf.placeholder(dtype='float', shape=[None,self.action_dim], name='targets')
         
         with tf.variable_scope(scope_name, reuse = tf.AUTO_REUSE):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu)
-            n2 = fully_connected(inputs=n1, num_outputs=32, activation_fn=relu)
-            output = fully_connected(inputs=n2, num_outputs=self.action_dim, activation_fn=tanh)
-            output_scaled = tf.scalar_mul(self.action_max_value,output)
+            n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu)
+            n1_normed = tf.layers.batch_normalization(n1)
+            
+            n2 = fully_connected(inputs=n1_normed, num_outputs=300, activation_fn=relu)
+            n2_normed = tf.layers.batch_normalization(n2)
+            
+            w_init = tf.initializers.random_uniform(minval=-0.003, maxval=0.003)
+            output = fully_connected(n2_normed, self.action_dim, activation_fn=tanh, weights_initializer=w_init)
+            output_scaled = tf.multiply(output, self.action_max_value)
+            
             loss = mean_squared_error(targets, output_scaled)
     
         return inputs_state, targets, output_scaled, loss        
@@ -70,7 +72,7 @@ class Critic():
     def __init__(self, state_size, action_size, action_max_value):
         self.gamma = 0.95
         self.tau = 0.001
-        self.lr = 0.0001
+        self.lr = 0.001
         self.state_dim = state_size
         self.action_dim = action_size
         self.action_max_value = action_max_value
@@ -110,14 +112,19 @@ class Critic():
         targets = tf.placeholder(dtype='float', shape=[None,1], name='targets')
         
         with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=32, activation_fn=relu, scope='l1')
-            n2 = fully_connected(inputs=n1, num_outputs=32, activation_fn=relu, scope='l2')
-            actions = fully_connected(inputs=inputs_action, num_outputs=32, activation_fn=relu, scope='action_layer')
+            n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu, scope='l1')
+            n1_normed = tf.layers.batch_normalization(n1)
+            n2 = fully_connected(inputs=n1_normed, num_outputs=300, activation_fn=relu, scope='l2')
+            n2_normed = tf.layers.batch_normalization(n2)
+            actions = fully_connected(inputs=inputs_action, num_outputs=300, activation_fn=relu, scope='action_layer')
             
-            n2_added = tf.add(actions,n2)
+            n2_added = tf.add(actions,n2_normed)
             
-            output = fully_connected(inputs=n2_added, num_outputs=self.action_dim, activation_fn=None, scope='n3')
+            output_unscaled = fully_connected(inputs=n2_added, num_outputs=self.action_dim, activation_fn=relu, scope='n3')
            
+            w_init = tf.initializers.random_uniform(minval=-0.003, maxval=0.003)
+            output = fully_connected(inputs = output_unscaled, num_outputs=1, weights_initializer=w_init)
+            
             loss = mean_squared_error(targets, output)
         
          
@@ -135,7 +142,7 @@ def fit_batch(sess, batch, actor, critic, discount):
         Q_target = reward 
         if(not done):
             Q_target += discount*Q_max_predictions[i][0]
-        Q_targets.append([Q_target])  
+        Q_targets.append(Q_target)  
     action_gradients = critic.get_action_gradient(sess, states, actions, Q_targets)
     critic.fit(sess, states, actions, Q_targets)
     actor.fit(sess, states, actions, action_gradients[0])
@@ -150,7 +157,7 @@ def train():
         batch_size = 4
         discount_factor = 0.99
 
-        env = gym.make('MountainCarContinuous-v0')
+        env = gym.make('Pendulum-v0')
         action_dim = len(env.action_space.sample())
         state_dim = len(env.reset())
         action_max = env.action_space.high[0]

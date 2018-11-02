@@ -39,7 +39,10 @@ class Actor():
    
     def predict(self, sess, state):
         return sess.run(self.output_pred, feed_dict = {self.input_state_pred : state} )
-        
+    
+    def predict_action(self, sess, state):
+        return sess.run(self.output, feed_dict = {self.input_state : state} )  
+    
     def fit(self, sess, state, action_targets, action_gradient):
         sess.run(self.optimizer, feed_dict = { self.input_state : state,
                                                self.targets : action_targets,
@@ -122,8 +125,7 @@ class Critic():
             
             output_unscaled = fully_connected(inputs=n2_added, num_outputs=self.action_dim, activation_fn=relu, scope='n3')
            
-            w_init = tf.initializers.random_uniform(minval=-0.003, maxval=0.003)
-            output = fully_connected(inputs = output_unscaled, num_outputs=1, weights_initializer=w_init)
+            output = fully_connected(inputs = output_unscaled, num_outputs=1, weights_initializer=tf.random_normal_initializer)
             
             loss = mean_squared_error(targets, output)
         
@@ -173,7 +175,8 @@ def train():
             state = env.reset()
             total_reward = 0
             while(not done):
-                action = actor.predict(sess, np.reshape(state, (1, state_dim))) + action_noise()
+                action = actor.predict_action(sess, np.reshape(state, (1, state_dim))) + action_noise()
+                print(action)
                 next_state, reward, done, info = env.step(action)
                 memory.append([np.squeeze(next_state),reward, action[0], np.squeeze(state), done])
                 total_reward += reward

@@ -1,5 +1,6 @@
 
 import tensorflow as tf
+import tflearn
 from tensorflow.layers import batch_normalization
 from tensorflow.contrib.layers import fully_connected, batch_norm
 from tensorflow.nn import relu, tanh
@@ -20,8 +21,8 @@ class Actor():
         self.action_dim = action_size
         self.action_max_value = action_max_value
         
-        self.input_state, self.targets, self.output, self.loss = self.create_net('actor')
-        self.input_state_pred, _ , self.output_pred , _ = self.create_net('pred_net_actor')
+        self.input_state, self.output = self.create_net('actor')
+        self.input_state_pred, self.output_pred = self.create_net('pred_net_actor')
         self.weights = tf.trainable_variables('actor')
         self.weights_pred = tf.trainable_variables('pred_net_actor')
 
@@ -43,9 +44,8 @@ class Actor():
     def predict_action(self, sess, state):
         return sess.run(self.output, feed_dict = {self.input_state : state} )  
     
-    def fit(self, sess, state, action_targets, action_gradient):
+    def fit(self, sess, state, action_gradient):
         sess.run(self.optimizer, feed_dict = { self.input_state : state,
-                                               self.targets : action_targets,
                                                self.action_gradient : action_gradient})
         
     def update_net(self, sess):
@@ -53,7 +53,6 @@ class Actor():
     
     def create_net(self, scope_name):
         inputs_state = tf.placeholder(dtype='float', shape=[None,self.state_dim], name='inputs')        
-        targets = tf.placeholder(dtype='float', shape=[None,self.action_dim], name='targets')
         
         with tf.variable_scope(scope_name, reuse = tf.AUTO_REUSE):
             n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu)
@@ -66,9 +65,8 @@ class Actor():
             output = fully_connected(n2_normed, self.action_dim, activation_fn=tanh, weights_initializer=w_init)
             output_scaled = tf.multiply(output, self.action_max_value)
             
-            loss = mean_squared_error(targets, output_scaled)
     
-        return inputs_state, targets, output_scaled, loss        
+        return inputs_state, output_scaled       
     
     
 class Critic():
@@ -90,21 +88,24 @@ class Critic():
                                                  tf.multiply(1.0-self.tau, self.weights_pred[i]) ))
                                 for i in range(len(self.weights))]
         self.optimizer = AdamOptimizer().minimize(self.loss)
-        self.action_gradient = tf.gradients(self.loss, self.input_action)
+        self.action_gradient = tf.gradients(self.output, self.input_action)
    
     def predict(self, sess, state, action):
         return sess.run(self.output_pred, feed_dict = { self.input_state_pred : state,
                                                         self.input_action_pred : action})
         
     def fit(self, sess, state, action, Q_target):
+        print(sess.run(self.loss, feed_dict = { self.input_state : state,
+                                                self.input_action : action,
+                                                self.targets : Q_target}))
         sess.run(self.optimizer, feed_dict = { self.input_state : state,
                                                 self.input_action : action,
                                                 self.targets : Q_target})
         
-    def get_action_gradient(self, sess, state, action, targets):
+    def get_action_gradient(self, sess, state, action):
         return sess.run(self.action_gradient, feed_dict = { self.input_state : state,
-                                                             self.input_action : action,
-                                                            self.targets: targets})
+                                                             self.input_action : action})
+    
     def update_net(self, sess):
         sess.run(self.update_pred_net)
     
@@ -125,7 +126,8 @@ class Critic():
             
             output_unscaled = fully_connected(inputs=n2_added, num_outputs=self.action_dim, activation_fn=relu, scope='n3')
            
-            output = fully_connected(inputs = output_unscaled, num_outputs=1, weights_initializer=tf.random_normal_initializer)
+            w_init = tflearn.initializations.uniform(minval=-0.003, maxval=0.003)
+            output = tflearn.fully_connected(output_unscaled, 1, weights_init=w_init)
             
             loss = mean_squared_error(targets, output)
         
@@ -138,14 +140,14 @@ def fit_batch(sess, batch, actor, critic, discount):
     actions = batch[2].tolist()
     next_states = batch[0].tolist()
     Q_max_predictions = critic.predict(sess, next_states, actor.predict(sess, states))
-    for i in range(len(batch)-1):
+    for i in range(len(batch[0])):
         done = batch[4][i]
         reward = batch[1][i]
         Q_target = reward 
         if(not done):
             Q_target += discount*Q_max_predictions[i][0]
-        Q_targets.append(Q_target)  
-    action_gradients = critic.get_action_gradient(sess, states, actions, Q_targets)
+        Q_targets.append(Q_target) 
+    action_gradients = critic.get_action_gradient(sess, states, actions)
     critic.fit(sess, states, actions, Q_targets)
     actor.fit(sess, states, actions, action_gradients[0])
 
@@ -156,7 +158,7 @@ def get_batch(memory, batch_size):
 def train():
     with tf.Session() as sess:
         episodes = 1000
-        batch_size = 4
+        batch_size = 32
         discount_factor = 0.99
 
         env = gym.make('Pendulum-v0')
@@ -176,17 +178,17 @@ def train():
             total_reward = 0
             while(not done):
                 action = actor.predict_action(sess, np.reshape(state, (1, state_dim))) + action_noise()
-                print(action)
                 next_state, reward, done, info = env.step(action)
                 memory.append([np.squeeze(next_state),reward, action[0], np.squeeze(state), done])
                 total_reward += reward
                 env.render()
+                state = next_state 
                 if len(memory) > batch_size:
                     batch = get_batch(memory, batch_size)
                     fit_batch(sess, list(batch), actor, critic, discount_factor)
                     actor.update_net(sess)
                     critic.update_net(sess)
-                state = next_state    
+                   
             print('episode: %d ... total reward: %d' %(episode,total_reward))
                     
 train()

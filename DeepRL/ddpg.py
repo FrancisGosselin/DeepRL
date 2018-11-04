@@ -95,9 +95,6 @@ class Critic():
                                                         self.input_action_pred : action})
         
     def fit(self, sess, state, action, Q_target):
-        print(sess.run(self.loss, feed_dict = { self.input_state : state,
-                                                self.input_action : action,
-                                                self.targets : Q_target}))
         sess.run(self.optimizer, feed_dict = { self.input_state : state,
                                                 self.input_action : action,
                                                 self.targets : Q_target})
@@ -118,14 +115,12 @@ class Critic():
         with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
             n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu, scope='l1')
             n1_normed = tf.layers.batch_normalization(n1)
-            n2 = fully_connected(inputs=n1_normed, num_outputs=300, activation_fn=relu, scope='l2')
-            n2_normed = tf.layers.batch_normalization(n2)
-            actions = fully_connected(inputs=inputs_action, num_outputs=300, activation_fn=relu, scope='action_layer')
             
-            n2_added = tf.add(actions,n2_normed)
+            n2 = fully_connected(n1_normed, 300, scope='n2')
+            action = fully_connected(inputs_action, 300)
+            weights_n2 = tf.trainable_variables(scope_name + '/n2/weights')
+            output_unscaled = relu( action + tf.matmul(n1_normed,weights_n2[0]))
             
-            output_unscaled = fully_connected(inputs=n2_added, num_outputs=self.action_dim, activation_fn=relu, scope='n3')
-           
             w_init = tflearn.initializations.uniform(minval=-0.003, maxval=0.003)
             output = tflearn.fully_connected(output_unscaled, 1, weights_init=w_init)
             
@@ -146,10 +141,10 @@ def fit_batch(sess, batch, actor, critic, discount):
         Q_target = reward 
         if(not done):
             Q_target += discount*Q_max_predictions[i][0]
-        Q_targets.append(Q_target) 
+        Q_targets.append([Q_target]) 
     action_gradients = critic.get_action_gradient(sess, states, actions)
     critic.fit(sess, states, actions, Q_targets)
-    actor.fit(sess, states, actions, action_gradients[0])
+    actor.fit(sess, states, action_gradients[0])
 
 def get_batch(memory, batch_size):
     batch = random.sample(memory,batch_size)
@@ -171,14 +166,15 @@ def train():
         critic = Critic(state_dim, action_dim, action_max)
         action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(action_dim))
         sess.run(tf.global_variables_initializer())
-
+        actor.update_net(sess)
+        critic.update_net(sess)
         for episode in range(episodes):
             done = False
             state = env.reset()
             total_reward = 0
             while(not done):
                 action = actor.predict_action(sess, np.reshape(state, (1, state_dim))) + action_noise()
-                next_state, reward, done, info = env.step(action)
+                next_state, reward, done, info = env.step(action[0])
                 memory.append([np.squeeze(next_state),reward, action[0], np.squeeze(state), done])
                 total_reward += reward
                 env.render()

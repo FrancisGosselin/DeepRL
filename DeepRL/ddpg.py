@@ -55,10 +55,13 @@ class Actor():
         inputs_state = tf.placeholder(dtype='float', shape=[None,self.state_dim], name='inputs')        
         
         with tf.variable_scope(scope_name, reuse = tf.AUTO_REUSE):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu)
+            n0 = fully_connected(inputs=inputs_state, num_outputs=64, activation_fn=relu, scope='n0')
+            n0_normed = tf.layers.batch_normalization(n0)
+            
+            n1 = fully_connected(inputs=n0_normed, num_outputs=64, activation_fn=relu, scope='n1')
             n1_normed = tf.layers.batch_normalization(n1)
             
-            n2 = fully_connected(inputs=n1_normed, num_outputs=300, activation_fn=relu)
+            n2 = fully_connected(inputs=n1_normed, num_outputs=64, activation_fn=relu)
             n2_normed = tf.layers.batch_normalization(n2)
             
             w_init = tf.initializers.random_uniform(minval=-0.003, maxval=0.003)
@@ -113,11 +116,15 @@ class Critic():
         targets = tf.placeholder(dtype='float', shape=[None,1], name='targets')
         
         with tf.variable_scope(scope_name, reuse=tf.AUTO_REUSE):
-            n1 = fully_connected(inputs=inputs_state, num_outputs=400, activation_fn=relu, scope='l1')
+            n0 = fully_connected(inputs=inputs_state, num_outputs=64, activation_fn=relu, scope='n0')
+            n0_normed = tf.layers.batch_normalization(n0)
+            
+            n1 = fully_connected(inputs=n0_normed, num_outputs=64, activation_fn=relu, scope='n1')
             n1_normed = tf.layers.batch_normalization(n1)
             
-            n2 = fully_connected(n1_normed, 300, scope='n2')
-            action = fully_connected(inputs_action, 300)
+            n2 = fully_connected(n1_normed, 64, scope='n2')
+            action = fully_connected(inputs_action, 64)
+            
             weights_n2 = tf.trainable_variables(scope_name + '/n2/weights')
             output_unscaled = relu( action + tf.matmul(n1_normed,weights_n2[0]))
             
@@ -152,16 +159,16 @@ def get_batch(memory, batch_size):
     
 def train():
     with tf.Session() as sess:
-        episodes = 1000
-        batch_size = 32
+        episodes = 2000
+        batch_size = 64
         discount_factor = 0.99
 
-        env = gym.make('Pendulum-v0')
+        env = gym.make('LunarLanderContinuous-v2')
         action_dim = len(env.action_space.sample())
         state_dim = len(env.reset())
         action_max = env.action_space.high[0]
 
-        memory = deque(maxlen=20000)
+        memory = deque(maxlen=1000000)
         actor = Actor(state_dim, action_dim, action_max, batch_size)
         critic = Critic(state_dim, action_dim, action_max)
         action_noise = OrnsteinUhlenbeckActionNoise(mu=np.zeros(action_dim))
@@ -173,7 +180,10 @@ def train():
             state = env.reset()
             total_reward = 0
             while(not done):
-                action = actor.predict_action(sess, np.reshape(state, (1, state_dim))) + action_noise()
+                action = actor.predict_action(sess, np.reshape(state, (1, state_dim))) 
+                if episode < 1000:
+                    action += action_noise()
+                action = np.clip(action, -action_max, action_max)
                 next_state, reward, done, info = env.step(action[0])
                 memory.append([np.squeeze(next_state),reward, action[0], np.squeeze(state), done])
                 total_reward += reward
